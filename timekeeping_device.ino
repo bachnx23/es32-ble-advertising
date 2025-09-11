@@ -1,133 +1,130 @@
-/*
-   Based on 31337Ghost's reference code from https://github.com/nkolban/esp32-snippets/issues/385#issuecomment-362535434
-   which is based on pcbreflux's Arduino ESP32 port of Neil Kolban's example for IDF: https://github.com/nkolban/esp32-snippets/blob/master/cpp_utils/tests/BLE%20Tests/SampleScan.cpp
-*/
-
-/*
-   Create a BLE server that will send periodic iBeacon frames.
-   The design of creating the BLE server is:
-   1. Create a BLE Server
-   2. Create advertising data
-   3. Start advertising.
-   4. wait
-   5. Stop advertising.
-*/
 #include <BLEDevice.h>
 #include <BLEServer.h>
 #include <BLEUtils.h>
 #include <BLE2902.h>
 #include <BLEBeacon.h>
 
-#define DEVICE_NAME         "ESP32 as iBeacon"
+#define DEVICE_NAME         "ESP32-BLE"
 #define SERVICE_UUID        "7A0247E7-8E88-409B-A959-AB5092DDB03E"
-#define BEACON_UUID         "2D7A9F0C-E0E8-4CC9-A71B-A21DB2D034A1"
-#define BEACON_UUID_REV     "A134D0B2-1DA2-1BA7-C94C-E8E00C9F7A2D"
 #define CHARACTERISTIC_UUID "82258BAA-DF72-47E8-99BC-B73D7ECD08A5"
+#define BEACON_UUID_REV     "A134D0B2-1DA2-1BA7-C94C-E8E00C9F7A2D"
 
 BLEServer *pServer;
 BLECharacteristic *pCharacteristic;
+BLEAdvertising *pAdvertising;
+
 bool deviceConnected = false;
 uint8_t value = 0;
+unsigned long lastAdvertiseCheck = 0;
 
 class MyServerCallbacks : public BLEServerCallbacks {
   void onConnect(BLEServer *pServer) {
     deviceConnected = true;
-    Serial.println("deviceConnected = true");
+    Serial.println("✅ Device connected");
   };
 
   void onDisconnect(BLEServer *pServer) {
     deviceConnected = false;
-    Serial.println("deviceConnected = false");
-
-    // Restart advertising to be visible and connectable again
-    BLEAdvertising *pAdvertising;
-    pAdvertising = pServer->getAdvertising();
-    pAdvertising->start();
-    Serial.println("iBeacon advertising restarted");
+    Serial.println("⚠️ Device disconnected → restarting advertising...");
+    if (pAdvertising) {
+      pAdvertising->start();
+    }
   }
 };
 
 class MyCallbacks : public BLECharacteristicCallbacks {
   void onWrite(BLECharacteristic *pCharacteristic) {
     String rxValue = pCharacteristic->getValue();
-
     if (rxValue.length() > 0) {
-      Serial.println("*********");
-      Serial.print("Received Value: ");
-      for (int i = 0; i < rxValue.length(); i++) {
-        Serial.print(rxValue[i]);
-      }
-      Serial.println();
-      Serial.println("*********");
+      Serial.print("📥 Received Value: ");
+      Serial.println(rxValue.c_str());
     }
   }
 };
 
 void init_service() {
-  BLEAdvertising *pAdvertising;
-  pAdvertising = pServer->getAdvertising();
-  pAdvertising->stop();
+  // Create BLE Service
+  BLEService *pService = pServer->createService(SERVICE_UUID);
 
-  // Create the BLE Service
-  BLEService *pService = pServer->createService(BLEUUID(SERVICE_UUID));
-
-  // Create a BLE Characteristic
+  // Create Characteristic
   pCharacteristic = pService->createCharacteristic(
-    CHARACTERISTIC_UUID, BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_WRITE | BLECharacteristic::PROPERTY_NOTIFY
+    CHARACTERISTIC_UUID,
+    BLECharacteristic::PROPERTY_READ |
+    BLECharacteristic::PROPERTY_WRITE |
+    BLECharacteristic::PROPERTY_NOTIFY
   );
   pCharacteristic->setCallbacks(new MyCallbacks());
   pCharacteristic->addDescriptor(new BLE2902());
 
-  pAdvertising->addServiceUUID(BLEUUID(SERVICE_UUID));
-
-  // Start the service
   pService->start();
 
-  pAdvertising->start();
+  // Add service UUID vào quảng bá
+  pAdvertising->addServiceUUID(SERVICE_UUID);
 }
 
 void init_beacon() {
-  BLEAdvertising *pAdvertising;
-  pAdvertising = pServer->getAdvertising();
-  pAdvertising->stop();
-  // iBeacon
   BLEBeacon myBeacon;
-  myBeacon.setManufacturerId(0x4c00);
+  myBeacon.setManufacturerId(0x4C00);  // Apple iBeacon
   myBeacon.setMajor(5);
   myBeacon.setMinor(88);
-  myBeacon.setSignalPower(0xc5);
+  myBeacon.setSignalPower(0xC5);
   myBeacon.setProximityUUID(BLEUUID(BEACON_UUID_REV));
 
   BLEAdvertisementData advertisementData;
   advertisementData.setFlags(0x1A);
   advertisementData.setManufacturerData(myBeacon.getData());
+
   pAdvertising->setAdvertisementData(advertisementData);
+}
+
+void startAdvertising() {
+  if (!pAdvertising) return;
+
+  // Thiết lập tốc độ quảng bá
+  pAdvertising->setMinInterval(0x20);  // 20ms
+  pAdvertising->setMaxInterval(0x40);  // 40ms
+  pAdvertising->setScanResponse(true);
 
   pAdvertising->start();
+  Serial.println("📡 BLE Advertising started");
 }
 
 void setup() {
   Serial.begin(115200);
-  Serial.println();
-  Serial.println("Initializing...");
-  Serial.flush();
+  Serial.println("🚀 Initializing ESP32 BLE...");
 
   BLEDevice::init(DEVICE_NAME);
   pServer = BLEDevice::createServer();
   pServer->setCallbacks(new MyServerCallbacks());
 
+  pAdvertising = pServer->getAdvertising();
+  pAdvertising->stop();
+
+  // Bật service để connect (bạn có thể bật cả 2)
   init_service();
+
+  // Nếu muốn phát iBeacon thì bật cái này
   // init_beacon();
 
-  Serial.println("iBeacon + service defined and advertising!");
+  startAdvertising();
 }
 
 void loop() {
+  // Nếu có client connect thì notify dữ liệu
   if (deviceConnected) {
-    Serial.printf("*** NOTIFY: %d ***\n", value);
+    Serial.printf("🔔 Notify: %d\n", value);
     pCharacteristic->setValue(&value, 1);
     pCharacteristic->notify();
     value++;
+    delay(2000);
   }
-  delay(2000);
+
+  // Watchdog: check mỗi 5 giây xem có còn quảng bá không
+  if (millis() - lastAdvertiseCheck > 5000) {
+    lastAdvertiseCheck = millis();
+    if (pAdvertising && !pAdvertising->isAdvertising()) {
+      Serial.println("⚠️ Advertising stopped unexpectedly → restart");
+      startAdvertising();
+    }
+  }
 }
