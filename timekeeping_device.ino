@@ -4,7 +4,7 @@
 #include <BLE2902.h>
 #include <BLEBeacon.h>
 
-#define DEVICE_NAME         "ESP32-BLE"
+#define DEVICE_NAME         "ESP32 as iBeacon"
 #define SERVICE_UUID        "7A0247E7-8E88-409B-A959-AB5092DDB03E"
 #define CHARACTERISTIC_UUID "82258BAA-DF72-47E8-99BC-B73D7ECD08A5"
 #define BEACON_UUID_REV     "A134D0B2-1DA2-1BA7-C94C-E8E00C9F7A2D"
@@ -14,6 +14,7 @@ BLECharacteristic *pCharacteristic;
 BLEAdvertising *pAdvertising;
 
 bool deviceConnected = false;
+bool isAdvertising = false;   // flag quản lý trạng thái advertising
 uint8_t value = 0;
 unsigned long lastAdvertiseCheck = 0;
 
@@ -28,6 +29,7 @@ class MyServerCallbacks : public BLEServerCallbacks {
     Serial.println("⚠️ Device disconnected → restarting advertising...");
     if (pAdvertising) {
       pAdvertising->start();
+      isAdvertising = true;
     }
   }
 };
@@ -86,7 +88,16 @@ void startAdvertising() {
   pAdvertising->setScanResponse(true);
 
   pAdvertising->start();
+  isAdvertising = true;
   Serial.println("📡 BLE Advertising started");
+}
+
+void stopAdvertising() {
+  if (pAdvertising) {
+    pAdvertising->stop();
+    isAdvertising = false;
+    Serial.println("🛑 BLE Advertising stopped");
+  }
 }
 
 void setup() {
@@ -98,9 +109,9 @@ void setup() {
   pServer->setCallbacks(new MyServerCallbacks());
 
   pAdvertising = pServer->getAdvertising();
-  pAdvertising->stop();
+  stopAdvertising();  // Đảm bảo dừng trước khi config
 
-  // Bật service để connect (bạn có thể bật cả 2)
+  // Bật service để connect
   init_service();
 
   // Nếu muốn phát iBeacon thì bật cái này
@@ -122,8 +133,8 @@ void loop() {
   // Watchdog: check mỗi 5 giây xem có còn quảng bá không
   if (millis() - lastAdvertiseCheck > 5000) {
     lastAdvertiseCheck = millis();
-    if (pAdvertising && !pAdvertising->isAdvertising()) {
-      Serial.println("⚠️ Advertising stopped unexpectedly → restart");
+    if (!isAdvertising) {
+      Serial.println("⚠️ Advertising flag is false → restart");
       startAdvertising();
     }
   }
